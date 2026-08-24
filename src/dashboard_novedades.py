@@ -7,12 +7,16 @@ Ejecutar con: uv run streamlit run src/dashboard_novedades.py
 
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
 from procesamiento_novedades import (
     GRANULARIDADES,
+    VARIABLE_CREDENCIALES_JSON,
     cargar_datos_crudos,
     limpiar_datos,
     resumen_por_causa,
@@ -21,6 +25,25 @@ from procesamiento_novedades import (
 )
 
 st.set_page_config(page_title="Novedades de entrega — CEDI", layout="wide", page_icon="🧵")
+
+
+def _preparar_secretos_streamlit_cloud() -> None:
+    """En Streamlit Community Cloud las credenciales se configuran como
+    "Secrets" (st.secrets), que no se inyectan solas en os.environ. Si no
+    hay variable de entorno pero sí existe el secreto, la copiamos.
+
+    Localmente no suele existir `secrets.toml`; en ese caso `st.secrets`
+    lanza `StreamlitSecretNotFoundError`, que tratamos como "no hay
+    secreto configurado" para seguir usando el `.env` local sin problema.
+    """
+    if os.environ.get(VARIABLE_CREDENCIALES_JSON):
+        return
+    try:
+        hay_secreto = VARIABLE_CREDENCIALES_JSON in st.secrets
+    except StreamlitSecretNotFoundError:
+        return
+    if hay_secreto:
+        os.environ[VARIABLE_CREDENCIALES_JSON] = st.secrets[VARIABLE_CREDENCIALES_JSON]
 
 COLUMNAS_RESUMEN = {
     "proveedor": "Manual / confeccionista",
@@ -34,6 +57,7 @@ COLUMNAS_RESUMEN = {
 
 @st.cache_data(ttl=600, show_spinner="Cargando solicitudes de citas desde Google Sheets...")
 def _obtener_datos() -> pd.DataFrame:
+    _preparar_secretos_streamlit_cloud()
     df_crudo = cargar_datos_crudos()
     return limpiar_datos(df_crudo)
 
