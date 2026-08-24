@@ -1,0 +1,23 @@
+# --- Entornos Virtuales y Herramientas ---
+.venv/
+.uv-cache/
+.tools/
+
+# --- Variables de Entorno y Credenciales ---
+.env
+.env.*
+credentials.json
+
+# --- Caché de Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Archivos de Sistema y Temporales ---
+*.xlsx:Zone.Identifier
+.DS_Store
+Thumbs.db
+
+# --- Salidas generadas (mantener las plantillas de data/ versionadas) ---
+data/estado_resultados*.xlsx

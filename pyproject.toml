@@ -1,0 +1,24 @@
+[project]
+name = "cedi-seguimiento"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Juan José Higuita", email = "analista_datos@dyaboo.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client>=2.199.0",
+    "google-auth>=2.56.3",
+    "gspread>=6.2.1",
+    "pandas>=3.0.5",
+    "plotly>=6.9.0",
+    "python-dotenv>=1.2.3",
+    "streamlit>=1.62.0",
+]
+
+[project.scripts]
+cedi-seguimiento = "cedi_seguimiento:main"
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
