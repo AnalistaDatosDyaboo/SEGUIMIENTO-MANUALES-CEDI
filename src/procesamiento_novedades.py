@@ -1,15 +1,15 @@
 """
-Limpieza, enriquecimiento temporal y agregaciones sobre las solicitudes de
-citas de entrega de "auxiliares" (unidades con novedad) que confeccionistas
-y manuales traen al CEDI para reproceso.
+Limpieza y enriquecimiento temporal de las solicitudes de citas de entrega
+de "auxiliares" (unidades con novedad) que confeccionistas y manuales traen
+al CEDI para reproceso.
 
 Fuente: hoja "SolicitudesCitas" (ver `cargar_solicitudes_citas.py`). Esa hoja
 registra únicamente eventos donde ya hubo una novedad al momento de la
-entrega: "Cantidad" es el tamaño de la OP asociada a esa cita y
-"Cantidad novedad" es la porción de esa OP que llegó con problema. La tasa
-de reproceso calculada aquí es entonces "unidades con novedad / unidades de
-la OP en la que se detectó la novedad", no una tasa sobre el 100% de todo lo
-que cada proveedor despacha (la hoja no contiene los despachos sin novedad).
+entrega: no incluye las entregas sin problema, así que por sí sola no sirve
+para calcular una tasa sobre el 100% de lo que cada proveedor entrega. Por
+eso `procesamiento_entregas.py` cruza el DataFrame que produce este módulo
+con el universo completo de entregas (con y sin novedad) para calcular la
+tasa real de entregas con novedad.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -124,59 +123,3 @@ def _etiqueta_periodo(periodo_inicio: pd.Timestamp, granularidad: str) -> str:
     if granularidad == "Trimestre":
         return f"{periodo_inicio.year}-T{((periodo_inicio.month - 1) // 3) + 1}"
     return str(periodo_inicio.year)
-
-
-def _resumen_por_columna(df: pd.DataFrame, columna: str) -> pd.DataFrame:
-    columnas_salida = [columna, "cantidad_reproceso", "cantidad_op_valida", "tasa_reproceso", "solicitudes"]
-    if df.empty:
-        return pd.DataFrame(columns=columnas_salida)
-
-    agregado = (
-        df.groupby(columna, as_index=False)
-        .agg(
-            cantidad_reproceso=("cantidad_reproceso", "sum"),
-            cantidad_op_valida=("cantidad_op_para_tasa", "sum"),
-            solicitudes=("cantidad_reproceso", "size"),
-        )
-    )
-    agregado["tasa_reproceso"] = (
-        agregado["cantidad_reproceso"] / agregado["cantidad_op_valida"] * 100
-    ).replace([np.inf, -np.inf], np.nan)
-    return agregado.sort_values("cantidad_reproceso", ascending=False).reset_index(drop=True)
-
-
-def resumen_por_proveedor(df: pd.DataFrame) -> pd.DataFrame:
-    """Unidades en reproceso, base válida y tasa (%) por manual/confeccionista."""
-    return _resumen_por_columna(df, "proveedor")
-
-
-def resumen_por_causa(df: pd.DataFrame) -> pd.DataFrame:
-    """Unidades en reproceso, base válida y tasa (%) por causa de novedad."""
-    return _resumen_por_columna(df, "causa")
-
-
-def resumen_por_periodo(df: pd.DataFrame, granularidad: str) -> pd.DataFrame:
-    """Serie temporal de unidades y tasa de reproceso agrupada por semana/mes/trimestre/año."""
-    columnas_salida = ["periodo_inicio", "periodo_etiqueta", "cantidad_reproceso", "cantidad_op_valida", "tasa_reproceso"]
-    if df.empty:
-        return pd.DataFrame(columns=columnas_salida)
-
-    codigo = GRANULARIDADES[granularidad]
-    periodo_inicio = df["fecha"].dt.to_period(codigo).apply(lambda p: p.start_time)
-
-    agregado = (
-        df.assign(periodo_inicio=periodo_inicio)
-        .groupby("periodo_inicio", as_index=False)
-        .agg(
-            cantidad_reproceso=("cantidad_reproceso", "sum"),
-            cantidad_op_valida=("cantidad_op_para_tasa", "sum"),
-        )
-        .sort_values("periodo_inicio")
-    )
-    agregado["periodo_etiqueta"] = agregado["periodo_inicio"].apply(
-        lambda t: _etiqueta_periodo(t, granularidad)
-    )
-    agregado["tasa_reproceso"] = (
-        agregado["cantidad_reproceso"] / agregado["cantidad_op_valida"] * 100
-    ).replace([np.inf, -np.inf], np.nan)
-    return agregado.reset_index(drop=True)
