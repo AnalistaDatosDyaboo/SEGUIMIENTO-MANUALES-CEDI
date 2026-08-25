@@ -45,6 +45,12 @@ def _preparar_secretos_streamlit_cloud() -> None:
     if hay_secreto:
         os.environ[VARIABLE_CREDENCIALES_JSON] = st.secrets[VARIABLE_CREDENCIALES_JSON]
 
+GRANULARIDAD_POR_ATAJO = {
+    "Año actual": "Mes",
+    "Mes actual": "Día",
+    "Semana actual": "Día",
+}
+
 COLUMNAS_RESUMEN = {
     "proveedor": "Manual / confeccionista",
     "causa": "Causa",
@@ -164,7 +170,19 @@ def main() -> None:
     causas_sel = st.sidebar.multiselect(
         "Causa de novedad", sorted(df["causa"].unique()), default=[]
     )
-    granularidad = st.sidebar.radio("Agrupar evolución por", list(GRANULARIDADES.keys()), index=1)
+    granularidad_automatica = GRANULARIDAD_POR_ATAJO.get(atajo)
+    if granularidad_automatica:
+        granularidad = granularidad_automatica
+        st.sidebar.caption(
+            f'📈 Evolución agrupada automáticamente por **{granularidad.lower()}** '
+            f'(según el rango rápido "{atajo}").'
+        )
+    else:
+        granularidad = st.sidebar.radio(
+            "Agrupar evolución por",
+            list(GRANULARIDADES.keys()),
+            index=list(GRANULARIDADES.keys()).index("Mes"),
+        )
 
     mascara = (df["fecha"].dt.date >= fecha_desde) & (df["fecha"].dt.date <= fecha_hasta)
     if proveedores_sel:

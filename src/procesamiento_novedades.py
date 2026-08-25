@@ -39,6 +39,7 @@ COLUMNAS_RENOMBRADAS = {
 }
 
 GRANULARIDADES = {
+    "Día": "D",
     "Semana": "W",
     "Mes": "M",
     "Trimestre": "Q",
@@ -113,6 +114,8 @@ def limpiar_datos(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _etiqueta_periodo(periodo_inicio: pd.Timestamp, granularidad: str) -> str:
+    if granularidad == "Día":
+        return periodo_inicio.strftime("%d/%m/%Y")
     if granularidad == "Semana":
         iso = periodo_inicio.isocalendar()
         return f"{iso.year}-S{iso.week:02d}"
