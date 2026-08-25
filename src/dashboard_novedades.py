@@ -2,6 +2,13 @@
 Dashboard interactivo de novedades en la entrega de "auxiliares" (unidades
 con problema) que confeccionistas y manuales traen al CEDI para reproceso.
 
+La tasa mostrada es "entregas con novedad / entregas totales": se cruza el
+universo completo de entregas recibidas (hoja "df_detallecita" del Google
+Sheet "ENTRADAS Y SALIDAS CEDI") con las novedades reportadas manualmente
+(hoja "SolicitudesCitas") para saber, del total de lo que realmente se
+entregó, qué porcentaje tuvo un problema — no solo un promedio calculado
+sobre las entregas que ya se sabía que tenían novedad.
+
 Ejecutar con: uv run streamlit run src/dashboard_novedades.py
 """
 
@@ -14,14 +21,17 @@ import plotly.express as px
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
+from procesamiento_entregas import (
+    construir_universo_entregas,
+    resumen_por_causa,
+    resumen_por_periodo,
+    resumen_por_proveedor,
+)
 from procesamiento_novedades import (
     GRANULARIDADES,
     VARIABLE_CREDENCIALES_JSON,
     cargar_datos_crudos,
     limpiar_datos,
-    resumen_por_causa,
-    resumen_por_periodo,
-    resumen_por_proveedor,
 )
 
 st.set_page_config(page_title="Novedades de entrega — CEDI", layout="wide", page_icon="🧵")
@@ -54,10 +64,11 @@ GRANULARIDAD_SUGERIDA_POR_ATAJO = {
 COLUMNAS_RESUMEN = {
     "proveedor": "Manual / confeccionista",
     "causa": "Causa",
-    "cantidad_reproceso": "Unidades en reproceso",
-    "cantidad_op_valida": "Unidades base (válidas)",
-    "tasa_reproceso": "Tasa de reproceso (%)",
-    "solicitudes": "Solicitudes",
+    "entregas_totales": "Entregas totales",
+    "entregas_con_novedad": "Entregas con novedad",
+    "unidades_reproceso": "Unidades en reproceso",
+    "tasa_entregas_con_novedad": "Tasa de entregas con novedad (%)",
+    "tasa_sobre_entregas_totales": "% del total de entregas",
 }
 
 
@@ -66,6 +77,12 @@ def _obtener_datos() -> pd.DataFrame:
     _preparar_secretos_streamlit_cloud()
     df_crudo = cargar_datos_crudos()
     return limpiar_datos(df_crudo)
+
+
+@st.cache_data(ttl=600, show_spinner="Cruzando entregas totales con novedades desde Google Sheets...")
+def _obtener_universo_entregas(df_novedades: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    _preparar_secretos_streamlit_cloud()
+    return construir_universo_entregas(df_novedades)
 
 
 def _formatear_tasa(valor: float) -> str:
@@ -87,9 +104,9 @@ def _grafico_evolucion(df_periodo: pd.DataFrame, granularidad: str, titulo: str 
     fig = px.line(
         df_periodo,
         x="periodo_etiqueta",
-        y="tasa_reproceso",
+        y="tasa_entregas_con_novedad",
         markers=True,
-        labels={"periodo_etiqueta": granularidad, "tasa_reproceso": "Tasa de reproceso (%)"},
+        labels={"periodo_etiqueta": granularidad, "tasa_entregas_con_novedad": "Tasa de entregas con novedad (%)"},
         title=titulo,
     )
     fig.update_traces(hovertemplate="%{x}<br>Tasa: %{y:.1f}%<extra></extra>")
@@ -97,12 +114,12 @@ def _grafico_evolucion(df_periodo: pd.DataFrame, granularidad: str, titulo: str 
     return fig
 
 
-def _grafico_barras_unidades(df_periodo: pd.DataFrame, granularidad: str, titulo: str | None = None):
+def _grafico_barras_entregas(df_periodo: pd.DataFrame, granularidad: str, titulo: str | None = None):
     fig = px.bar(
         df_periodo,
         x="periodo_etiqueta",
-        y="cantidad_reproceso",
-        labels={"periodo_etiqueta": granularidad, "cantidad_reproceso": "Unidades en reproceso"},
+        y="entregas_con_novedad",
+        labels={"periodo_etiqueta": granularidad, "entregas_con_novedad": "Entregas con novedad"},
         title=titulo,
     )
     return fig
@@ -118,7 +135,7 @@ def _grafico_ranking(df_resumen: pd.DataFrame, columna: str, valores: str, etiqu
         labels={valores: etiqueta_valores, columna: ""},
         title=titulo,
     )
-    if valores == "tasa_reproceso":
+    if valores.startswith("tasa"):
         fig.update_layout(xaxis_ticksuffix="%")
     return fig
 
@@ -126,23 +143,31 @@ def _grafico_ranking(df_resumen: pd.DataFrame, columna: str, valores: str, etiqu
 def main() -> None:
     st.title("🧵 Novedades en la entrega de auxiliares")
     st.caption(
-        "Reproceso reportado por confeccionistas y manuales al momento de la entrega "
-        "(fuente: hoja *SolicitudesCitas*)."
+        "Del total de entregas recibidas en el CEDI (hoja *df_detallecita*), qué "
+        "porcentaje tuvo una novedad reportada por el confeccionista/manual o por "
+        "el CEDI al momento de recibirla (hoja *SolicitudesCitas*)."
     )
 
     try:
-        df = _obtener_datos()
+        df_novedades = _obtener_datos()
     except (RuntimeError, FileNotFoundError) as exc:
-        st.error(f"No se pudieron cargar los datos: {exc}")
+        st.error(f"No se pudieron cargar las novedades: {exc}")
         st.stop()
         return
 
-    if df.empty:
-        st.warning("La hoja de solicitudes de citas no tiene registros.")
+    try:
+        df_entregas, n_sin_cruce = _obtener_universo_entregas(df_novedades)
+    except (RuntimeError, FileNotFoundError) as exc:
+        st.error(f"No se pudo cargar el detalle de entregas: {exc}")
         st.stop()
         return
 
-    fecha_min, fecha_max = df["fecha"].min().date(), df["fecha"].max().date()
+    if df_entregas.empty:
+        st.warning("No hay entregas recibidas registradas en la hoja df_detallecita.")
+        st.stop()
+        return
+
+    fecha_min, fecha_max = df_entregas["fecha"].min().date(), df_entregas["fecha"].max().date()
     hoy = pd.Timestamp.today().normalize()
 
     st.sidebar.header("Filtros")
@@ -165,10 +190,12 @@ def main() -> None:
         fecha_desde, fecha_hasta = fecha_min, fecha_max
 
     proveedores_sel = st.sidebar.multiselect(
-        "Manual / confeccionista", sorted(df["proveedor"].unique()), default=[]
+        "Manual / confeccionista", sorted(df_entregas["proveedor"].unique()), default=[]
     )
     causas_sel = st.sidebar.multiselect(
-        "Causa de novedad", sorted(df["causa"].unique()), default=[]
+        "Causa de novedad",
+        sorted(df_entregas.loc[df_entregas["tiene_novedad"], "causa"].dropna().unique()),
+        default=[],
     )
     opciones_granularidad = list(GRANULARIDADES.keys())
     sugerida = GRANULARIDAD_SUGERIDA_POR_ATAJO.get(atajo, "Mes")
@@ -186,44 +213,49 @@ def main() -> None:
             f'📈 Sugerido para "{atajo}": **{sugerida.lower()}** — puedes cambiarlo arriba.'
         )
 
-    mascara = (df["fecha"].dt.date >= fecha_desde) & (df["fecha"].dt.date <= fecha_hasta)
+    mascara = (df_entregas["fecha"].dt.date >= fecha_desde) & (df_entregas["fecha"].dt.date <= fecha_hasta)
     if proveedores_sel:
-        mascara &= df["proveedor"].isin(proveedores_sel)
+        mascara &= df_entregas["proveedor"].isin(proveedores_sel)
+    df_filtrado = df_entregas.loc[mascara].copy()
+
+    # Filtrar por causa NO elimina las entregas sin novedad: el total de
+    # entregas (denominador) se mantiene igual y solo se restringe cuáles
+    # entregas cuentan como "con novedad" (numerador) a las causas elegidas.
     if causas_sel:
-        mascara &= df["causa"].isin(causas_sel)
-    df_filtrado = df.loc[mascara]
+        df_filtrado["tiene_novedad"] = df_filtrado["tiene_novedad"] & df_filtrado["causa"].isin(causas_sel)
 
     if df_filtrado.empty:
-        st.warning("No hay registros para los filtros seleccionados.")
+        st.warning("No hay entregas para los filtros seleccionados.")
         st.stop()
         return
 
-    total_reproceso = df_filtrado["cantidad_reproceso"].sum()
-    total_op_valida = df_filtrado["cantidad_op_para_tasa"].sum()
-    tasa_general = (total_reproceso / total_op_valida * 100) if total_op_valida else float("nan")
+    entregas_totales = len(df_filtrado)
+    entregas_con_novedad = int(df_filtrado["tiene_novedad"].sum())
+    tasa_general = (entregas_con_novedad / entregas_totales * 100) if entregas_totales else float("nan")
     n_manuales = df_filtrado["proveedor"].nunique()
-    n_solicitudes = len(df_filtrado)
-    registros_sin_base = int((~df_filtrado["cantidad_op_valida"]).sum())
+    unidades_reproceso = df_filtrado.loc[df_filtrado["tiene_novedad"], "cantidad_reproceso"].sum()
 
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Unidades en reproceso (auxiliares)", f"{total_reproceso:,.0f}")
-    col2.metric("Tasa de reproceso general", _formatear_tasa(tasa_general))
-    col3.metric("Manuales / confeccionistas", n_manuales)
-    col4.metric("Solicitudes con novedad", n_solicitudes)
-    col5.metric("Sin cantidad base válida", registros_sin_base)
+    col1.metric("Entregas totales", f"{entregas_totales:,.0f}")
+    col2.metric("Entregas con novedad", f"{entregas_con_novedad:,.0f}")
+    col3.metric("Tasa de entregas con novedad", _formatear_tasa(tasa_general))
+    col4.metric("Manuales / confeccionistas", n_manuales)
+    col5.metric("Unidades en reproceso (auxiliares)", f"{unidades_reproceso:,.0f}")
 
-    with st.expander("ℹ️ Cómo se calcula la tasa de reproceso"):
+    with st.expander("ℹ️ Cómo se calcula la tasa de entregas con novedad"):
         st.markdown(
-            "La hoja de solicitudes solo registra citas de entrega en las que **ya hubo "
-            "una novedad**; no incluye las entregas sin problema. Por eso la tasa se "
-            "calcula como `unidades con novedad / unidades de la OP en la que se detectó "
-            "la novedad`, sumadas en el periodo o grupo seleccionado: es el porcentaje de "
-            "esa OP puntual que llegó con problema, no un porcentaje sobre el 100% de todo "
-            "lo que cada proveedor despacha.\n\n"
-            f"En el rango filtrado, **{registros_sin_base} de {n_solicitudes}** solicitudes "
-            "no tienen una cantidad base válida (vacía, en cero o menor a la cantidad con "
-            "novedad) y se excluyen del cálculo de la tasa, aunque sus unidades sí se "
-            "cuentan en el total de auxiliares."
+            "Se cruza el detalle completo de citas de entrega recibidas en el CEDI "
+            "(`df_detallecita`) con las novedades reportadas por separado "
+            "(`SolicitudesCitas`), emparejando por número de OP y referencia — y, "
+            "cuando la misma OP tuvo varias citas, tomando la más cercana en fecha "
+            "a la novedad reportada. Así el porcentaje que ves es "
+            "`entregas con novedad / entregas totales`, sobre el 100% de lo que "
+            "realmente se entregó (no solo sobre las entregas que ya se sabía que "
+            "tenían problema).\n\n"
+            f"De las {len(df_novedades)} novedades reportadas en total, "
+            f"**{n_sin_cruce}** no se pudieron cruzar con ninguna entrega recibida "
+            "(por ejemplo, por un número de OP o referencia mal digitado en el "
+            "formulario) y por lo tanto no quedan contabilizadas en esta tasa."
         )
 
     st.divider()
@@ -233,10 +265,10 @@ def main() -> None:
     )
 
     with tab_evolucion:
-        st.subheader(f"Evolución de la tasa de reproceso — {granularidad.lower()}")
+        st.subheader(f"Evolución de la tasa de entregas con novedad — {granularidad.lower()}")
         evolucion = resumen_por_periodo(df_filtrado, granularidad)
         st.plotly_chart(_grafico_evolucion(evolucion, granularidad), width="stretch")
-        st.plotly_chart(_grafico_barras_unidades(evolucion, granularidad), width="stretch")
+        st.plotly_chart(_grafico_barras_entregas(evolucion, granularidad), width="stretch")
 
     with tab_manuales:
         st.subheader("Ranking de manuales / confeccionistas")
@@ -246,16 +278,16 @@ def main() -> None:
         with col_izq:
             st.plotly_chart(
                 _grafico_ranking(
-                    resumen_prov, "proveedor", "cantidad_reproceso",
-                    "Unidades en reproceso", "Quién trajo más auxiliares (unidades)",
+                    resumen_prov, "proveedor", "tasa_entregas_con_novedad",
+                    "Tasa de entregas con novedad (%)", "Mayor tasa de entregas con novedad (%)",
                 ),
                 width="stretch",
             )
         with col_der:
             st.plotly_chart(
                 _grafico_ranking(
-                    resumen_prov, "proveedor", "tasa_reproceso",
-                    "Tasa de reproceso (%)", "Mayor tasa de reproceso (%)",
+                    resumen_prov, "proveedor", "entregas_con_novedad",
+                    "Entregas con novedad", "Quién tuvo más entregas con novedad",
                 ),
                 width="stretch",
             )
@@ -275,16 +307,16 @@ def main() -> None:
             fig_pie = px.pie(
                 resumen_causa,
                 names="causa",
-                values="cantidad_reproceso",
-                title="Distribución de auxiliares por causa",
+                values="entregas_con_novedad",
+                title="Distribución de entregas con novedad por causa",
                 hole=0.4,
             )
             st.plotly_chart(fig_pie, width="stretch")
         with col_der:
             st.plotly_chart(
                 _grafico_ranking(
-                    resumen_causa, "causa", "cantidad_reproceso",
-                    "Unidades en reproceso", "Causa que más auxiliares trajo",
+                    resumen_causa, "causa", "tasa_sobre_entregas_totales",
+                    "% del total de entregas", "Causas con mayor impacto sobre el total de entregas",
                 ),
                 width="stretch",
             )
@@ -302,40 +334,77 @@ def main() -> None:
             "específicamente esa manual o esa causa durante el periodo filtrado."
         )
         modo = st.radio("Analizar por", ["Manual / confeccionista", "Causa"], horizontal=True)
-        columna = "proveedor" if modo == "Manual / confeccionista" else "causa"
-        columna_otro = "causa" if columna == "proveedor" else "proveedor"
-        etiqueta_otro = "Causas" if columna_otro == "causa" else "Manuales / confeccionistas"
 
-        resumen_base = resumen_por_proveedor(df_filtrado) if columna == "proveedor" else resumen_por_causa(df_filtrado)
-        opciones = resumen_base[columna].tolist()
+        if modo == "Manual / confeccionista":
+            resumen_base = resumen_por_proveedor(df_filtrado)
+            opciones = resumen_base["proveedor"].tolist()
+        else:
+            resumen_base = resumen_por_causa(df_filtrado)
+            opciones = resumen_base["causa"].tolist()
 
         if not opciones:
             st.info("No hay datos para detallar con los filtros actuales.")
         else:
             seleccion = st.selectbox("Selecciona", opciones)
-            df_seleccion = df_filtrado[df_filtrado[columna] == seleccion]
+
+            if modo == "Manual / confeccionista":
+                # Se conserva el universo completo de ese proveedor (con y sin
+                # novedad) para que la tasa siga siendo "entregas con novedad
+                # de este proveedor / entregas totales de este proveedor".
+                df_seleccion = df_filtrado[df_filtrado["proveedor"] == seleccion].copy()
+                resumen_otro = resumen_por_causa(df_seleccion)
+                etiqueta_otro, columna_otro = "Causas involucradas", "causa"
+            else:
+                # Para una causa no hay un "total de entregas de esa causa":
+                # se mantiene el universo completo filtrado y solo se cuentan
+                # como "con novedad" las entregas de esa causa específica, así
+                # la tasa muestra qué % de TODAS las entregas tuvo esa causa.
+                df_seleccion = df_filtrado.copy()
+                df_seleccion["tiene_novedad"] = df_seleccion["tiene_novedad"] & (df_seleccion["causa"] == seleccion)
+                resumen_otro = (
+                    df_filtrado[df_filtrado["causa"] == seleccion]
+                    .groupby("proveedor", as_index=False)
+                    .size()
+                    .rename(columns={"size": "entregas_con_novedad"})
+                    .sort_values("entregas_con_novedad", ascending=False)
+                )
+                etiqueta_otro, columna_otro = "Manuales / confeccionistas involucrados", "proveedor"
 
             evolucion_sel = resumen_por_periodo(df_seleccion, granularidad)
             st.plotly_chart(
-                _grafico_evolucion(evolucion_sel, granularidad, f"Evolución de la tasa de reproceso — {seleccion}"),
+                _grafico_evolucion(
+                    evolucion_sel, granularidad,
+                    f"Evolución de la tasa de entregas con novedad — {seleccion}",
+                ),
                 width="stretch",
             )
             st.plotly_chart(
-                _grafico_barras_unidades(evolucion_sel, granularidad, f"Unidades en reproceso por periodo — {seleccion}"),
-                width="stretch",
-            )
-
-            resumen_otro = resumen_por_causa(df_seleccion) if columna_otro == "causa" else resumen_por_proveedor(df_seleccion)
-            st.plotly_chart(
-                _grafico_ranking(
-                    resumen_otro, columna_otro, "cantidad_reproceso",
-                    "Unidades en reproceso", f"{etiqueta_otro} involucrados en {seleccion}",
+                _grafico_barras_entregas(
+                    evolucion_sel, granularidad, f"Entregas con novedad por periodo — {seleccion}",
                 ),
                 width="stretch",
             )
 
-    with st.expander("📄 Datos filtrados"):
-        st.dataframe(df_filtrado, width="stretch", hide_index=True)
+            st.plotly_chart(
+                _grafico_ranking(
+                    resumen_otro, columna_otro, "entregas_con_novedad",
+                    "Entregas con novedad", f"{etiqueta_otro} en {seleccion}",
+                ),
+                width="stretch",
+            )
+
+    with st.expander("📄 Entregas filtradas"):
+        st.dataframe(
+            df_filtrado[
+                [
+                    "fecha", "proveedor", "numero_op", "referencia",
+                    "cantidad_programada", "cantidad_recibida",
+                    "tiene_novedad", "causa", "cantidad_reproceso",
+                ]
+            ],
+            width="stretch",
+            hide_index=True,
+        )
 
 
 if __name__ == "__main__":
