@@ -45,7 +45,7 @@ def _preparar_secretos_streamlit_cloud() -> None:
     if hay_secreto:
         os.environ[VARIABLE_CREDENCIALES_JSON] = st.secrets[VARIABLE_CREDENCIALES_JSON]
 
-GRANULARIDAD_POR_ATAJO = {
+GRANULARIDAD_SUGERIDA_POR_ATAJO = {
     "Año actual": "Mes",
     "Mes actual": "Día",
     "Semana actual": "Día",
@@ -170,18 +170,20 @@ def main() -> None:
     causas_sel = st.sidebar.multiselect(
         "Causa de novedad", sorted(df["causa"].unique()), default=[]
     )
-    granularidad_automatica = GRANULARIDAD_POR_ATAJO.get(atajo)
-    if granularidad_automatica:
-        granularidad = granularidad_automatica
+    opciones_granularidad = list(GRANULARIDADES.keys())
+    sugerida = GRANULARIDAD_SUGERIDA_POR_ATAJO.get(atajo, "Mes")
+    if st.session_state.get("_atajo_anterior") != atajo:
+        st.session_state["granularidad"] = sugerida
+        st.session_state["_atajo_anterior"] = atajo
+
+    granularidad = st.sidebar.radio(
+        "Agrupar evolución por",
+        opciones_granularidad,
+        key="granularidad",
+    )
+    if atajo in GRANULARIDAD_SUGERIDA_POR_ATAJO:
         st.sidebar.caption(
-            f'📈 Evolución agrupada automáticamente por **{granularidad.lower()}** '
-            f'(según el rango rápido "{atajo}").'
-        )
-    else:
-        granularidad = st.sidebar.radio(
-            "Agrupar evolución por",
-            list(GRANULARIDADES.keys()),
-            index=list(GRANULARIDADES.keys()).index("Mes"),
+            f'📈 Sugerido para "{atajo}": **{sugerida.lower()}** — puedes cambiarlo arriba.'
         )
 
     mascara = (df["fecha"].dt.date >= fecha_desde) & (df["fecha"].dt.date <= fecha_hasta)
