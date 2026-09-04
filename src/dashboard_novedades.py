@@ -86,7 +86,7 @@ def _obtener_universo_entregas(df_novedades: pd.DataFrame) -> tuple[pd.DataFrame
 
 
 def _formatear_tasa(valor: float) -> str:
-    return "s/d" if pd.isna(valor) else f"{valor:.1f}%"
+    return "s/d" if pd.isna(valor) else f"{valor:.2f}%"
 
 
 def _calcular_rango_defecto(atajo: str, fecha_min, fecha_max, hoy: pd.Timestamp):
@@ -128,20 +128,20 @@ def _grafico_barras_entregas(df_periodo: pd.DataFrame, granularidad: str, titulo
 def _grafico_ranking(df_resumen: pd.DataFrame, columna: str, valores: str, etiqueta_valores: str, titulo: str):
     datos = df_resumen.dropna(subset=[valores]).sort_values(valores, ascending=False).head(15)
     fig = px.bar(
-        datos.sort_values(valores),
-        x=valores,
-        y=columna,
-        orientation="h",
+        datos,
+        x=columna,
+        y=valores,
         labels={valores: etiqueta_valores, columna: ""},
         title=titulo,
     )
+    fig.update_xaxes(tickangle=-45)
     if valores.startswith("tasa"):
-        fig.update_layout(xaxis_ticksuffix="%")
+        fig.update_layout(yaxis_ticksuffix="%")
     return fig
 
 
 def main() -> None:
-    st.title("🧵 Novedades en la entrega de auxiliares")
+    st.title("🧵 NOVEDADES EN LAS ENTREGAS A CEDI")
     st.caption(
         "Del total de entregas recibidas en el CEDI (hoja *df_detallecita*), qué "
         "porcentaje tuvo una novedad reportada por el confeccionista/manual o por "
@@ -230,17 +230,19 @@ def main() -> None:
         return
 
     entregas_totales = len(df_filtrado)
+    unidades_totales = df_filtrado["cantidad_recibida"].sum()
     entregas_con_novedad = int(df_filtrado["tiene_novedad"].sum())
     tasa_general = (entregas_con_novedad / entregas_totales * 100) if entregas_totales else float("nan")
     n_manuales = df_filtrado["proveedor"].nunique()
     unidades_reproceso = df_filtrado.loc[df_filtrado["tiene_novedad"], "cantidad_reproceso"].sum()
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("Entregas totales", f"{entregas_totales:,.0f}")
-    col2.metric("Entregas con novedad", f"{entregas_con_novedad:,.0f}")
-    col3.metric("Tasa de entregas con novedad", _formatear_tasa(tasa_general))
-    col4.metric("Manuales / confeccionistas", n_manuales)
-    col5.metric("Unidades en reproceso (auxiliares)", f"{unidades_reproceso:,.0f}")
+    col2.metric("Entregas totales (unidades)", f"{unidades_totales:,.0f}")
+    col3.metric("Entregas con novedad", f"{entregas_con_novedad:,.0f}")
+    col4.metric("Tasa de entregas con novedad", _formatear_tasa(tasa_general))
+    col5.metric("Manuales / confeccionistas", n_manuales)
+    col6.metric("Unidades en reproceso (auxiliares)", f"{unidades_reproceso:,.0f}")
 
     with st.expander("ℹ️ Cómo se calcula la tasa de entregas con novedad"):
         st.markdown(
